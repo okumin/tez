@@ -68,6 +68,7 @@
     <commons-collections4.version>4.4</commons-collections4.version>
     <commons-io.version>2.16.0</commons-io.version>
     <commons-lang.version>2.6</commons-lang.version>
+    <curator.version>2.7.1</curator.version>
     <clover.license>${user.home}/clover.license</clover.license>
     <dependency-check-maven.version>3.2.0</dependency-check-maven.version>
     <findbugs-maven-plugin.version>3.0.5</findbugs-maven-plugin.version>

@@ -315,7 +315,7 @@ public class TestLocalMode {
     }
   }
 
-  private void createInputFile(FileSystem fs, String path) throws IOException {
+  public static void createInputFile(FileSystem fs, String path) throws IOException {
     Path file = new Path(new Path(path), "input.txt");
     try {
       FSDataOutputStream fsdos = fs.create(file);

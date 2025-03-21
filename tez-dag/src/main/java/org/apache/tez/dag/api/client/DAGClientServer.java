@@ -65,7 +65,9 @@ public class DAGClientServer extends AbstractService {
   public void serviceStart() {
     try {
       Configuration conf = getConfig();
-      InetSocketAddress addr = new InetSocketAddress(0);
+      int rpcPort = conf.getInt(TezConfiguration.TEZ_AM_RPC_PORT,
+          TezConfiguration.TEZ_AM_RPC_PORT_DEFAULT);
+      InetSocketAddress addr = new InetSocketAddress(rpcPort);
 
       DAGClientAMProtocolBlockingPBServerImpl service =
           new DAGClientAMProtocolBlockingPBServerImpl(realInstance, stagingFs);

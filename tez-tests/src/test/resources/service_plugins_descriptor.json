@@ -1,0 +1,11 @@
+{
+  "taskSchedulerDescriptors": [
+  ],
+  "containerLauncherDescriptors": [
+  ],
+  "taskCommunicatorDescriptors": [
+  ],
+  "enableContainers": false,
+  "enableUber": true
+}
+

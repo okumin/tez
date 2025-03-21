@@ -482,7 +482,9 @@ public class TezClient {
   }
 
   private void startFrameworkClient() {
-    frameworkClient = createFrameworkClient();
+    if (frameworkClient == null) {
+      frameworkClient = createFrameworkClient();
+    }
     frameworkClient.init(amConfig.getTezConfiguration());
     frameworkClient.start();
   }

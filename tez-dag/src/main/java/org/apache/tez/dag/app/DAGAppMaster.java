@@ -45,6 +45,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Optional;
 import java.util.Random;
 import java.util.Set;
 import java.util.Timer;
@@ -68,9 +69,12 @@ import org.apache.commons.cli.GnuParser;
 import org.apache.commons.cli.Options;
 import org.apache.commons.lang.exception.ExceptionUtils;
 import org.apache.hadoop.yarn.api.records.NodeId;
+import org.apache.hadoop.yarn.conf.YarnConfiguration;
 import org.apache.tez.Utils;
 import org.apache.tez.client.CallerContext;
 import org.apache.tez.client.TezClientUtils;
+import org.apache.tez.client.registry.AMRecord;
+import org.apache.tez.client.registry.AMRegistry;
 import org.apache.tez.common.ReflectionUtils;
 import org.apache.tez.common.TezUtils;
 import org.apache.tez.dag.api.NamedEntityDescriptor;
@@ -186,6 +190,9 @@ import org.apache.tez.dag.records.TezTaskAttemptID;
 import org.apache.tez.dag.records.TezVertexID;
 import org.apache.tez.dag.utils.RelocalizationUtils;
 import org.apache.tez.dag.utils.Simple2LevelVersionComparator;
+import org.apache.tez.frameworkplugins.AmExtensions;
+import org.apache.tez.frameworkplugins.FrameworkUtils;
+import org.apache.tez.frameworkplugins.ServerFrameworkService;
 import org.apache.tez.hadoop.shim.HadoopShim;
 import org.apache.tez.hadoop.shim.HadoopShimsLoader;
 import org.apache.tez.runtime.hook.TezDAGHook;
@@ -225,6 +232,10 @@ import com.google.common.util.concurrent.ThreadFactoryBuilder;
 public class DAGAppMaster extends AbstractService {
 
   private static final Logger LOG = LoggerFactory.getLogger(DAGAppMaster.class);
+  private static final Optional<ServerFrameworkService> frameworkService =
+      FrameworkUtils.get(ServerFrameworkService.class, null);
+  public static final Optional<AmExtensions> amExts =
+      frameworkService.flatMap(fs -> fs.createOrGetDAGAppMasterExtensions());
 
   /**
    * Priority of the DAGAppMaster shutdown hook.
@@ -520,8 +531,10 @@ public class DAGAppMaster extends AbstractService {
     containerHeartbeatHandler = createContainerHeartbeatHandler(context, conf);
     addIfService(containerHeartbeatHandler, true);
 
-    sessionToken =
-        TokenCache.getSessionToken(amCredentials);
+    sessionToken = amExts.flatMap(amExtensions -> amExtensions.getSessionToken(
+        appAttemptID, jobTokenSecretManager, amCredentials
+    )).orElse(TokenCache.getSessionToken(amCredentials));
+
     if (sessionToken == null) {
       throw new RuntimeException("Could not find session token in AM Credentials");
     }
@@ -609,15 +622,13 @@ public class DAGAppMaster extends AbstractService {
 
     if (!versionMismatch) {
       if (isSession) {
-        try (BufferedInputStream sessionResourcesStream =
-            new BufferedInputStream(
-                new FileInputStream(new File(workingDirectory,
-                    TezConstants.TEZ_AM_LOCAL_RESOURCES_PB_FILE_NAME)))) {
-          PlanLocalResourcesProto amLocalResourceProto = PlanLocalResourcesProto
-              .parseDelimitedFrom(sessionResourcesStream);
-          amResources.putAll(DagTypeConverters
-              .convertFromPlanLocalResources(amLocalResourceProto));
+        DAGProtos.PlanLocalResourcesProto amLocalResourceProto =
+            amExts.flatMap(amExtensions -> amExtensions.getAdditionalSessionResources(workingDirectory))
+                .orElse(null);
+        if (amLocalResourceProto == null) {
+          amLocalResourceProto = getAdditionalSessionResources(workingDirectory);
         }
+        amResources.putAll(DagTypeConverters.convertFromPlanLocalResources(amLocalResourceProto));
       }
     }
 
@@ -629,6 +640,13 @@ public class DAGAppMaster extends AbstractService {
         Executors.newFixedThreadPool(threadCount, new ThreadFactoryBuilder()
             .setDaemon(true).setNameFormat("App Shared Pool - #%d").build());
     execService = MoreExecutors.listeningDecorator(rawExecutor);
+
+    Optional<AMRegistry> amRegistry =
+        frameworkService.flatMap(service -> service.createOrGetAMRegistry(conf));
+    if(amRegistry.isPresent()) {
+      initAmRegistry(appAttemptID.getApplicationId(), amRegistry.get(), clientRpcServer);
+      addIfService(amRegistry.get(), false);
+    }
 
     initServices(conf);
     super.serviceInit(conf);
@@ -655,6 +673,36 @@ public class DAGAppMaster extends AbstractService {
   protected void initClientRpcServer() {
     clientRpcServer = new DAGClientServer(clientHandler, appAttemptID, recoveryFS);
     addIfService(clientRpcServer, true);
+  }
+
+  private static DAGProtos.PlanLocalResourcesProto getAdditionalSessionResources(String workingDirectory) throws IOException {
+    FileInputStream sessionResourcesStream = null;
+    try {
+      sessionResourcesStream =
+          new FileInputStream(new File(workingDirectory, TezConstants.TEZ_AM_LOCAL_RESOURCES_PB_FILE_NAME));
+      return DAGProtos.PlanLocalResourcesProto.parseDelimitedFrom(sessionResourcesStream);
+    } finally {
+      if (sessionResourcesStream != null) {
+        sessionResourcesStream.close();
+      }
+    }
+  }
+
+  @VisibleForTesting
+  public static void initAmRegistry(ApplicationId appId, AMRegistry amRegistry, DAGClientServer dagClientServer) throws Exception {
+    dagClientServer.registerServiceListener((service) -> {
+      if (service.isInState(STATE.STARTED)) {
+        AMRecord amRecord = amRegistry.createAmRecord(
+            appId, dagClientServer.getBindAddress().getHostName(), dagClientServer.getBindAddress().getPort()
+        );
+        try {
+          amRegistry.add(amRecord);
+          LOG.info("Added AMRecord: {} to registry..", amRecord);
+        } catch (Exception e) {
+          throw new RuntimeException(e);
+        }
+      }
+    });
   }
 
   @VisibleForTesting
@@ -2387,7 +2435,19 @@ public class DAGAppMaster extends AbstractService {
       Objects.requireNonNull(appSubmitTimeStr,
           ApplicationConstants.APP_SUBMIT_TIME_ENV + " is null");
 
-      ContainerId containerId = ConverterUtils.toContainerId(containerIdStr);
+      // TODO Does this really need to be a YarnConfiguration ?
+      Configuration conf = new Configuration(new YarnConfiguration());
+
+      DAGProtos.ConfigurationProto confProto = amExts.flatMap(amExt -> amExt.loadConfigurationProto()).orElse(null);
+      if (confProto == null) {
+        confProto = TezUtilsInternal
+            .readUserSpecifiedTezConfiguration(System.getenv(ApplicationConstants.Environment.PWD.name()));
+      }
+      TezUtilsInternal.addUserSpecifiedTezConfiguration(conf, confProto.getConfKeyValuesList());
+      ContainerId containerId = amExts.flatMap(amExt -> amExt.allocateContainerId(conf)).orElse(null);
+      if (containerId == null) {
+        containerId = ConverterUtils.toContainerId(containerIdStr);
+      }
       ApplicationAttemptId applicationAttemptId =
           containerId.getApplicationAttemptId();
       org.apache.hadoop.ipc.CallerContext.setCurrent(new org.apache.hadoop.ipc.CallerContext
@@ -2416,12 +2476,6 @@ public class DAGAppMaster extends AbstractService {
           + ", pwd=" + System.getenv(Environment.PWD.name())
           + ", localDirs=" + System.getenv(Environment.LOCAL_DIRS.name())
           + ", logDirs=" + System.getenv(Environment.LOG_DIRS.name()));
-
-      Configuration conf = new Configuration();
-
-      ConfigurationProto confProto =
-          TezUtilsInternal.readUserSpecifiedTezConfiguration(System.getenv(Environment.PWD.name()));
-      TezUtilsInternal.addUserSpecifiedTezConfiguration(conf, confProto.getConfKeyValuesList());
 
       AMPluginDescriptorProto amPluginDescriptorProto = null;
       if (confProto.hasAmPluginDescriptor()) {
@@ -2749,9 +2803,14 @@ public class DAGAppMaster extends AbstractService {
 
     if (tezYarnEnabled) {
       // Default classnames will be populated by individual components
-      NamedEntityDescriptor r = new NamedEntityDescriptor(
+      NamedEntityDescriptor namedEntityDescriptor = new NamedEntityDescriptor(
           TezConstants.getTezYarnServicePluginName(), null).setUserPayload(defaultPayload);
-      addDescriptor(resultList, pluginMap, r);
+      if(namedEntityDescriptor.getUserPayload() == null && defaultPayload != null) {
+        //If custom-plugin descriptor includes no payload, include the defaultPayload
+        //Useful in providing Configuration payload for hand-written JSON descriptors
+        namedEntityDescriptor.setUserPayload(defaultPayload);
+      }
+      addDescriptor(resultList, pluginMap, namedEntityDescriptor);
     }
 
     if (uberEnabled) {
@@ -2781,6 +2840,10 @@ public class DAGAppMaster extends AbstractService {
   static void processSchedulerDescriptors(List<NamedEntityDescriptor> descriptors, boolean isLocal,
                                           UserPayload defaultPayload,
                                           BiMap<String, Integer> schedulerPluginMap) {
+    boolean isUsingYarnServicePlugin = true;
+    if(amExts.isPresent()) {
+      isUsingYarnServicePlugin = amExts.get().isUsingYarnServicePlugin();
+    }
     if (isLocal) {
       boolean foundUberServiceName = false;
       for (NamedEntityDescriptor descriptor : descriptors) {
@@ -2790,7 +2853,7 @@ public class DAGAppMaster extends AbstractService {
         }
       }
       Preconditions.checkState(foundUberServiceName);
-    } else {
+    } else if (isUsingYarnServicePlugin) {
       boolean foundYarn = false;
       for (int i = 0; i < descriptors.size(); i++) {
         if (descriptors.get(i).getEntityName().equals(TezConstants.getTezYarnServicePluginName())) {

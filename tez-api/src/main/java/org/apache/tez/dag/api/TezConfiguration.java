@@ -863,6 +863,13 @@ public class TezConfiguration extends Configuration {
   public static final boolean
     TEZ_AM_NODE_UNHEALTHY_RESCHEDULE_TASKS_DEFAULT = false;
 
+  /** Int value. Port used for AM RPC*/
+  @ConfigurationScope(Scope.AM)
+  @ConfigurationProperty(type="integer")
+  public static final String TEZ_AM_RPC_PORT =
+    TEZ_AM_PREFIX + "rpc.port";
+  public static final int TEZ_AM_RPC_PORT_DEFAULT = 0;
+
   /** Int value. Number of threads to handle client RPC requests. Expert level setting.*/
   @ConfigurationScope(Scope.AM)
   @ConfigurationProperty(type="integer")
@@ -2288,6 +2295,72 @@ public class TezConfiguration extends Configuration {
   @ConfigurationScope(Scope.AM)
   @ConfigurationProperty
   public static final String TEZ_JOB_FS_SERVERS_TOKEN_RENEWAL_EXCLUDE = "tez.job.fs-servers.token-renewal.exclude";
+
+  /**
+   * String value
+   */
+  @ConfigurationScope(Scope.AM)
+  @ConfigurationProperty
+  public static final String TEZ_AM_ZOOKEEPER_QUORUM = TEZ_AM_PREFIX
+      + "zookeeper.quorum";
+
+  /**
+   * String value
+   */
+  @ConfigurationScope(Scope.AM)
+  @ConfigurationProperty
+  public static final String TEZ_AM_REGISTRY_NAMESPACE = TEZ_AM_PREFIX
+      + "registry.namespace";
+  public static final String TEZ_AM_REGISTRY_NAMESPACE_DEFAULT = "/tez_am/server";
+
+  /**
+   * Integer value
+   */
+  @ConfigurationScope(Scope.AM)
+  @ConfigurationProperty
+  public static final String TEZ_AM_CURATOR_BACKOFF_SLEEP = TEZ_AM_PREFIX
+      + "curator.backoff.sleep";
+  public static final int TEZ_AM_CURATOR_BACKOFF_SLEEP_DEFAULT = 1000;
+
+  /**
+   * Integer value
+   */
+  @ConfigurationScope(Scope.AM)
+  @ConfigurationProperty
+  public static final String TEZ_AM_CURATOR_MAX_RETRIES = TEZ_AM_PREFIX
+      + "curator.max.retries";
+  public static final int TEZ_AM_CURATOR_MAX_RETRIES_DEFAULT = 3;
+
+  /**
+   * Integer value (milliseconds)
+   */
+  @ConfigurationScope(Scope.AM)
+  @ConfigurationProperty
+  public static final String TEZ_AM_CURATOR_SESSION_TIMEOUT = TEZ_AM_PREFIX
+      + "curator.session.timeout";
+  public static final int TEZ_AM_CURATOR_SESSION_TIMEOUT_DEFAULT = 60000;
+
+  /**
+   * Integer value (milliseconds)
+   */
+  @ConfigurationScope(Scope.AM)
+  @ConfigurationProperty
+  public static final String TEZ_AM_CURATOR_CONNECTION_TIMEOUT = TEZ_AM_PREFIX
+      + "curator.connection.timeout";
+  public static final int TEZ_AM_CURATOR_CONNECTION_TIMEOUT_DEFAULT = 15000;
+
+  @ConfigurationScope(Scope.AM)
+  @ConfigurationProperty
+  public static final String TEZ_FRAMEWORK_MODE =
+      TEZ_PREFIX + ".framework.mode";
+
+  /**
+   * List of additional hadoop config files to load from CLASSPATH in standalone mode
+   */
+  @ConfigurationScope(Scope.AM)
+  @ConfigurationProperty
+  public static final String TEZ_AM_STANDALONE_CONFS =
+      TEZ_AM_PREFIX + "standalone.confs";
 
   /**
    *  Comma-separated list of properties that MRReaderMapred should return (if present) when calling for config updates.

@@ -49,6 +49,7 @@ import org.apache.tez.common.GuavaShim;
 import org.apache.tez.common.ProgressHelper;
 import org.apache.tez.common.TezUtilsInternal;
 import org.apache.tez.common.counters.LimitExceededException;
+import org.apache.tez.dag.app.DAGAppMaster;
 import org.apache.tez.dag.app.dag.event.DAGEventTerminateDag;
 import org.apache.tez.dag.app.dag.event.DiagnosableEvent;
 import org.apache.tez.runtime.library.common.shuffle.ShuffleUtils;
@@ -1612,7 +1613,11 @@ public class DAGImpl implements org.apache.tez.dag.app.dag.DAG,
     }
 
     // check task resources, only check it in non-local mode
-    if (!appContext.isLocal()) {
+    boolean checkTaskResources = true;
+    if(DAGAppMaster.amExts.isPresent()) {
+      checkTaskResources = DAGAppMaster.amExts.get().checkTaskResources(vertexMap, appContext);
+    }
+    if (!appContext.isLocal() && checkTaskResources) {
       for (Vertex v : vertexMap.values()) {
         // TODO TEZ-2003 (post) TEZ-2624 Ideally, this should be per source.
         if (v.getTaskResource().compareTo(appContext.getClusterInfo().getMaxContainerCapability()) > 0) {
